@@ -95,8 +95,9 @@ def write_ca_certs(func):
         try:
             with tempfile.NamedTemporaryFile() as fp:
                 fp.write(CA_CERT)
+                fp.flush()
                 _ca_cert_file = fp.name
-                func(*args, **kwargs)
+                return func(*args, **kwargs)
         finally:
             _ca_cert_file = None
     return wrapped
@@ -171,6 +172,8 @@ def preauth(ikey, skey, host, username):
         return
 
     if result == API_RESULT_AUTH:
+        log('secondary authentication required for user %s' % username)
+
         factors = response.get('factors')
         if factors is None:
             log('invalid API response: %s' % response)
