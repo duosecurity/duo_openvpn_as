@@ -239,15 +239,6 @@ def auth(ikey, skey, host, username, password, ipaddr):
 
 @write_ca_certs
 def post_auth_cr(authcred, attributes, authret, info, crstate):
-    # see post_auth.txt for a detailed description of these members
-    log("**********************************************")
-    log("AUTHCRED %s" % authcred)
-    log("ATTRIBUTES %s" % attributes)
-    log("AUTHRET %s" % authret)
-    log("INFO %s" % info)
-    log("CRSTATE %s" % crstate)
-    log("**********************************************")
-
     # Don't do challenge/response on sessions or autologin clients.
     # autologin client: a client that has been issued a special
     #   certificate allowing authentication with only a certificate
