@@ -226,9 +226,11 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     username = authcred['username']
     ipaddr = authcred['client_ip_addr']
 
-    duo_pass = crstate.response()          # response to dynamic challenge
 
-    if duo_pass:
+    if crstate.get('challenge'):
+        # response to dynamic challenge
+        duo_pass = crstate.response()
+
         # received response
         crstate.expire()
         try:
@@ -246,21 +248,8 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
             authret['reason'] = "Exception caught in auth: %s" % e
             authret['client_reason'] = \
                 "Unknown error communicating with Duo service"
-
-    elif crstate.get('challenge'):
-        # received an empty or null response after challenge issued
-
-        # make sure to expire crstate at the end of the
-        # challenge/response transaction
-        crstate.expire()
-        authret['status'] = FAIL
-        authret['reason'] = "No response was provided to Duo challenge"
-
-        # allow end user to see actual error text
-        authret['client_reason'] = authret['reason']
-
     else:
-        # initial auth request without static response; issue challenge
+        # initial auth request; issue challenge
         try:
             result, msg = preauth(IKEY, SKEY, HOST, username)
             if result == API_RESULT_AUTH:
