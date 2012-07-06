@@ -160,7 +160,7 @@ def preauth(ikey, skey, host, username):
 
     if result == API_RESULT_AUTH:
         log('secondary authentication required for user %s' % username)
-        msg = 'Duo passcode or out-of-band factor:'
+        msg = 'Duo passcode or second factor:'
         return (result, msg)
 
     status = response.get('status')
