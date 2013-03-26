@@ -10,20 +10,19 @@
 IKEY = '<DUO INTEGRATION KEY HERE>'
 SKEY = '<DUO INTEGRATION SECRET KEY HERE>'
 HOST = '<DUO API HOSTNAME HERE>'
+
+# To use an HTTPS proxy, enter its address below. If PROXY_HOST is
+# left blank no proxy will be used.
+PROXY_HOST = ''
+PROXY_PORT = 8080
+
 # ------------------------------------------------------------------
 
-import base64
-import functools
-import hashlib
-import hmac
-import itertools
-import json
 import syslog
 import tempfile
 import traceback
-import urllib
 
-from pyovpn.plugin import *
+from pyovpn.plugin import (SUCCEED, FAIL)
 
 SYNCHRONOUS=False
 
@@ -65,233 +64,214 @@ rQXvqzJ4h6BUcxm1XAX5Uj5tLUUL9wqT6u0G+bI=
 -----END CERTIFICATE-----
 '''
 
-_ca_cert_file = None
-def write_ca_certs(func):
-    """ Decorator to write the contents of CA_CERT to a (securely-created)
-    named tempfile, save that name in our global _ca_cert_file, call
-    the wrapped function, then close the temp file and reset
-    _ca_cert_file to None when done.
+### OpenVPN Access Server imports post-auth scripts into database
+### blobs, so we have to include dependencies inline.
 
-    We do this because python's SSL module requires that certificates
-    be in *real* files on disk...
-    """
+### The following code was adapted from duo_client_python.
 
-    @functools.wraps(func)
-    def wrapped(*args, **kwargs):
-        global _ca_cert_file
-        try:
-            with tempfile.NamedTemporaryFile() as fp:
-                fp.write(CA_CERT)
-                fp.flush()
-                _ca_cert_file = fp.name
-                return func(*args, **kwargs)
-        finally:
-            _ca_cert_file = None
-    return wrapped
+import base64
+import email.utils
+import hashlib
+import hmac
+import json
+import os
+import sys
+import urllib
 
-def canonicalize(method, host, uri, params):
-    canon = [method.upper(), host.lower(), uri]
-
+def canon_params(params):
     args = []
     for key in sorted(params.keys()):
         val = params[key]
         arg = '%s=%s' % (urllib.quote(key, '~'), urllib.quote(val, '~'))
         args.append(arg)
-    canon.append('&'.join(args))
+    return '&'.join(args)
 
+
+def canonicalize(method, host, uri, params, date, sig_version):
+    if sig_version == 1:
+        canon = []
+    elif sig_version == 2:
+        canon = [date]
+    else:
+        raise NotImplementedError(sig_version)
+
+    canon += [
+        method.upper(),
+        host.lower(),
+        uri,
+        canon_params(params),
+    ]
     return '\n'.join(canon)
 
-def sign(ikey, skey, method, host, uri, params):
-    sig = hmac.new(skey, canonicalize(method, host, uri, params), hashlib.sha1)
+
+def sign(ikey, skey, method, host, uri, date, sig_version, params):
+    """
+    Return basic authorization header line with a Duo Web API signature.
+    """
+    canonical = canonicalize(method, host, uri, params, date, sig_version)
+    if isinstance(skey, unicode):
+        skey = skey.encode('utf-8')
+    sig = hmac.new(skey, canonical, hashlib.sha1)
     auth = '%s:%s' % (ikey, sig.hexdigest())
     return 'Basic %s' % base64.b64encode(auth)
 
-def call(ikey, skey, host, method, path, **kwargs):
-    headers = {'Authorization':sign(ikey, skey, method, host, path, kwargs)}
 
-    if method in [ 'POST', 'PUT' ]:
-        headers['Content-type'] = 'application/x-www-form-urlencoded'
-        body = urllib.urlencode(kwargs, doseq=True)
-        uri = path
-    else:
-        body = None
-        uri = path + '?' + urllib.urlencode(kwargs, doseq=True)
-
-    conn = CertValidatingHTTPSConnection(host, 443, ca_certs=_ca_cert_file)
-    conn.request(method, uri, body, headers)
-    response = conn.getresponse()
-    data = response.read()
-    conn.close()
-
-    return (response.status, response.reason, data)
-
-def api(ikey, skey, host, method, path, **kwargs):
-    (status, reason, data) = call(ikey, skey, host, method, path, **kwargs)
-    if status != 200:
-        raise RuntimeError('Received %s %s: %s' % (status, reason, data))
-
-    try:
-        data = json.loads(data)
-        if data['stat'] != 'OK':
-            raise RuntimeError('Received error response: %s' % data)
-        return data['response']
-    except (ValueError, KeyError):
-        raise RuntimeError('Received bad response: %s' % data)
-
-def log(msg):
-    msg = 'Duo OpenVPN_AS: %s' % msg
-    syslog.syslog(msg)
-
-def preauth(ikey, skey, host, username):
-    log('pre-authentication for %s' % username)
-
-    args = {
-        'user': username,
-    }
-
-    response = api(ikey, skey, host, 'POST', '/rest/v1/preauth', **args)
-
-    result = response.get('result')
-
-    if not result:
-        log('invalid API response: %s' % response)
-        raise RuntimeError('invalid API response: %s' % response)
-        return
-
-    if result == API_RESULT_AUTH:
-        log('secondary authentication required for user %s' % username)
-        msg = 'Duo passcode or second factor:'
-        return (result, msg)
-
-    status = response.get('status')
-
-    if not status:
-        log('invalid API response: %s' % response)
-        raise RuntimeError('invalid API response: %s' % response)
-    msg = status
-
-    if result == API_RESULT_ENROLL:
-        log('user %s is not enrolled: %s' % (username, status))
-    elif result == API_RESULT_DENY:
-        log('preauth failure for %s: %s' % (username, status))
-    elif result == API_RESULT_ALLOW:
-        log('preauth success for %s: %s' % (username, status))
-    else:
-        log('unknown preauth result: %s' % result)
-
-    return (result, msg)
-
-def auth(ikey, skey, host, username, password, ipaddr):
-    log('authentication for %s' % username)
-
-    args = {
-        'user': username,
-        'factor': 'auto',
-        'auto': password,
-        'ipaddr': ipaddr
-    }
-
-    response = api(ikey, skey, host, 'POST', '/rest/v1/auth', **args)
-
-    result = response.get('result')
-    status = response.get('status')
-
-    if not result or not status:
-        log('invalid API response: %s' % response)
-        raise RuntimeError('invalid API response: %s' % response)
-        return
-
-    if result == API_RESULT_ALLOW:
-        log('auth success for %s: %s' % (username, status))
-    elif result == API_RESULT_DENY:
-        log('auth failure for %s: %s' % (username, status))
-    else:
-        log('unknown auth result: %s' % result)
-
-    return result, status
-
-@write_ca_certs
-def post_auth_cr(authcred, attributes, authret, info, crstate):
-    # Don't do challenge/response on sessions or autologin clients.
-    # autologin client: a client that has been issued a special
-    #   certificate allowing authentication with only a certificate
-    #   (used for unattended clients such as servers).
-    # session: a client that has already authenticated and received
-    #   a session token.  The client is attempting to authenticate
-    #   again using the session token.
-
-    if info.get('auth_method') in ('session', 'autologin'):
-        return authret
-
-    username = authcred['username']
-    ipaddr = authcred['client_ip_addr']
+def encode_params(params):
+    """Returns copy of params with unicode strings utf-8 encoded"""
+    new_params = {}
+    for key, value in params.items():
+        if isinstance(key, unicode):
+            key = key.encode("utf-8")
+        if isinstance(value, unicode):
+            value = value.encode("utf-8")
+        new_params[key] = value
+    return new_params
 
 
-    if crstate.get('challenge'):
-        # response to dynamic challenge
-        duo_pass = crstate.response()
+class Client(object):
+    sig_version = 1
 
-        # received response
-        crstate.expire()
+    def __init__(self, ikey, skey, host,
+                 ca_certs=None):
+        """
+        ca - Path to CA pem file.
+        """
+        self.ikey = ikey
+        self.skey = skey
+        self.host = host
+        self.ca_certs = ca_certs
+        self.set_proxy(host=None, proxy_type=None)
+
+    def set_proxy(self, host, port=None, headers=None,
+                  proxy_type='CONNECT'):
+        """
+        Configure proxy for API calls. Supported proxy_type values:
+
+        'CONNECT' - HTTP proxy with CONNECT.
+        None - Disable proxy.
+        """
+        if proxy_type not in ('CONNECT', None):
+            raise NotImplementedError('proxy_type=%s' % (proxy_type,))
+        self.proxy_headers = headers
+        self.proxy_host = host
+        self.proxy_port = port
+        self.proxy_type = proxy_type
+
+    def api_call(self, method, path, params):
+        """
+        Call a Duo API method. Return a (status, reason, data) tuple.
+        """
+        # urllib cannot handle unicode strings properly. quote() excepts,
+        # and urlencode() replaces them with '?'.
+        params = encode_params(params)
+
+        now = email.utils.formatdate()
+        auth = sign(self.ikey,
+                    self.skey,
+                    method,
+                    self.host,
+                    path,
+                    now,
+                    self.sig_version,
+                    params)
+        headers = {
+            'Authorization': auth,
+            'Date': now,
+        }
+
+        if method in ['POST', 'PUT']:
+            headers['Content-type'] = 'application/x-www-form-urlencoded'
+            body = urllib.urlencode(params, doseq=True)
+            uri = path
+        else:
+            body = None
+            uri = path + '?' + urllib.urlencode(params, doseq=True)
+
+        # Host and port for the HTTP(S) connection to the API server.
+        if self.ca_certs == 'HTTP':
+            api_port = 80
+            api_proto = 'http'
+        else:
+            api_port = 443
+            api_proto = 'https'
+
+        # Host and port for outer HTTP(S) connection if proxied.
+        if self.proxy_type is None:
+            host = self.host
+            port = api_port
+        elif self.proxy_type == 'CONNECT':
+            host = self.proxy_host
+            port = self.proxy_port
+        else:
+            raise NotImplementedError('proxy_type=%s' % (self.proxy_type,))
+
+        # Create outer HTTP(S) connection.
+        conn = CertValidatingHTTPSConnection(host,
+                                             port,
+                                             ca_certs=self.ca_certs)
+
+        # Configure CONNECT proxy tunnel, if any.
+        if self.proxy_type == 'CONNECT':
+            # Ensure the request has the correct Host.
+            uri = ''.join((api_proto, '://', self.host, uri))
+            if hasattr(conn, 'set_tunnel'): # 2.7+
+                conn.set_tunnel(self.host,
+                                api_port,
+                                self.proxy_headers)
+            elif hasattr(conn, '_set_tunnel'): # 2.6.3+
+                # pylint: disable=E1103
+                conn._set_tunnel(self.host,
+                                 api_port,
+                                 self.proxy_headers)
+                # pylint: enable=E1103
+
+        conn.request(method, uri, body, headers)
+        response = conn.getresponse()
+        data = response.read()
+        conn.close()
+
+        return (response, data)
+
+    def json_api_call(self, method, path, params):
+        """
+        Call a Duo API method which is expected to return a JSON body
+        with a 200 status. Return the response data structure or raise
+        RuntimeError.
+        """
+        (response, data) = self.api_call(method, path, params)
+        if response.status != 200:
+            msg = 'Received %s %s' % (response.status, response.reason)
+            try:
+                data = json.loads(data)
+                if data['stat'] == 'FAIL':
+                    if 'message_detail' in data:
+                        msg = 'Received %s %s (%s)' % (
+                            response.status,
+                            data['message'],
+                            data['message_detail'],
+                        )
+                    else:
+                        msg = 'Received %s %s' % (
+                            response.status,
+                            data['message'],
+                        )
+            except (ValueError, KeyError, TypeError):
+                pass
+            error = RuntimeError(msg)
+            error.status = response.status
+            error.reason = response.reason
+            error.data = data
+            raise error
         try:
-            result, msg = auth(IKEY, SKEY, HOST, username, duo_pass, ipaddr)
-            if result == API_RESULT_ALLOW:
-                authret['status'] = SUCCEED
-                authret['reason'] = msg
-            else:
-                authret['status'] = FAIL
-                authret['reason'] = msg
-            authret['client_reason'] = authret['reason']
-        except Exception as e:
-            log(traceback.format_exc())
-            authret['status'] = FAIL
-            authret['reason'] = "Exception caught in auth: %s" % e
-            authret['client_reason'] = \
-                "Unknown error communicating with Duo service"
-    else:
-        # initial auth request; issue challenge
-        try:
-            result, msg = preauth(IKEY, SKEY, HOST, username)
-            if result == API_RESULT_AUTH:
-                # save state indicating challenge has been issued
-                crstate['challenge'] = True
-                crstate.challenge_post_auth(authret, msg, echo=True)
-            elif result == API_RESULT_ENROLL:
-                authret['status'] = FAIL
+            data = json.loads(data)
+            if data['stat'] != 'OK':
+                raise RuntimeError('Received error response: %s' % data)
+            return data['response']
+        except (ValueError, KeyError, TypeError):
+            raise RuntimeError('Received bad response: %s' % data)
 
-                # Attempt to detect whether the login came from a web client
-                # or a native client
-                if attributes.get('log_service_name') == 'WEB_CLIENT':
-                    # It's pretty reasonable to copy/paste the enrollment
-                    # link when it's displayed in a web client
-                    authret['reason'] = msg
-                else:
-                    # Native clients tend not to be in a good position to
-                    # show an enrollment link (e.g. on windows, it shows
-                    # up in a temporary balloon popup from the
-                    # systray), so we'll replace it with a generic message.
-                    authret['reason'] = ('User account has not been '
-                                         'enrolled for Duo authentication')
-                authret['client_reason'] = authret['reason']
-            elif result != API_RESULT_ALLOW:
-                authret['status'] = FAIL
-                authret['reason'] = msg
-                authret['client_reason'] = authret['reason']
-        except Exception as e:
-            log(traceback.format_exc())
-            authret['status'] = FAIL
-            authret['reason'] = "Exception caught in pre-auth: %s" % e
-            authret['client_reason'] = \
-                "Unknown error communicating with Duo service"
-
-    return authret
-
-# OpenVPN Access Server imports post-auth scripts into database blobs,
-# so we have to include dependencies inline.
-
-# The following code was adapted from:
-# https://googleappengine.googlecode.com/svn-history/r136/trunk/python/google/appengine/tools/https_wrapper.py
-#
+### The following code was adapted from:
+### https://googleappengine.googlecode.com/svn-history/r136/trunk/python/google/appengine/tools/https_wrapper.py
 
 # Copyright 2007 Google Inc.
 #
@@ -396,7 +376,10 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
     "Connect to a host on a given (SSL) port."
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((self.host, self.port))
-    self.sock = ssl.wrap_socket(sock, keyfile=self.key_file,
+    self.sock = sock
+    if self._tunnel_host:
+      self._tunnel()
+    self.sock = ssl.wrap_socket(self.sock, keyfile=self.key_file,
                                 certfile=self.cert_file,
                                 cert_reqs=self.cert_reqs,
                                 ca_certs=self.ca_certs)
@@ -405,3 +388,167 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
       hostname = self.host.split(':', 0)[0]
       if not self._ValidateCertificateHostname(cert, hostname):
         raise InvalidCertificateException(hostname, cert, 'hostname mismatch')
+
+### duo_openvpn_as.py integration code:
+
+def log(msg):
+    msg = 'Duo OpenVPN_AS: %s' % msg
+    syslog.syslog(msg)
+
+class OpenVPNIntegration(Client):
+    def api_call(self, *args, **kwargs):
+        orig_ca_certs = self.ca_certs
+        try:
+            with tempfile.NamedTemporaryFile() as fp:
+                fp.write(CA_CERT)
+                fp.flush()
+                self.ca_certs = fp.name
+                return Client.api_call(self, *args, **kwargs)
+        finally:
+            self.ca_certs = orig_ca_certs
+
+    def preauth(self, username):
+        log('pre-authentication for %s' % username)
+
+        params = {
+            'user': username,
+        }
+
+        response = self.json_api_call('POST', '/rest/v1/preauth', params)
+
+        result = response.get('result')
+
+        if not result:
+            log('invalid API response: %s' % response)
+            raise RuntimeError('invalid API response: %s' % response)
+            return
+
+        if result == API_RESULT_AUTH:
+            log('secondary authentication required for user %s' % username)
+            msg = 'Duo passcode or second factor:'
+            return (result, msg)
+
+        status = response.get('status')
+
+        if not status:
+            log('invalid API response: %s' % response)
+            raise RuntimeError('invalid API response: %s' % response)
+        msg = status
+
+        if result == API_RESULT_ENROLL:
+            log('user %s is not enrolled: %s' % (username, status))
+        elif result == API_RESULT_DENY:
+            log('preauth failure for %s: %s' % (username, status))
+        elif result == API_RESULT_ALLOW:
+            log('preauth success for %s: %s' % (username, status))
+        else:
+            log('unknown preauth result: %s' % result)
+
+        return (result, msg)
+
+    def auth(self, username, password, ipaddr):
+        log('authentication for %s' % username)
+
+        params = {
+            'user': username,
+            'factor': 'auto',
+            'auto': password,
+            'ipaddr': ipaddr
+        }
+
+        response = self.json_api_call('POST', '/rest/v1/auth', params)
+
+        result = response.get('result')
+        status = response.get('status')
+
+        if not result or not status:
+            log('invalid API response: %s' % response)
+            raise RuntimeError('invalid API response: %s' % response)
+            return
+
+        if result == API_RESULT_ALLOW:
+            log('auth success for %s: %s' % (username, status))
+        elif result == API_RESULT_DENY:
+            log('auth failure for %s: %s' % (username, status))
+        else:
+            log('unknown auth result: %s' % result)
+
+        return result, status
+
+api = OpenVPNIntegration(IKEY, SKEY, HOST)
+if PROXY_HOST:
+    api.set_proxy(host=PROXY_HOST, port=PROXY_PORT)
+
+def post_auth_cr(authcred, attributes, authret, info, crstate):
+    # Don't do challenge/response on sessions or autologin clients.
+    # autologin client: a client that has been issued a special
+    #   certificate allowing authentication with only a certificate
+    #   (used for unattended clients such as servers).
+    # session: a client that has already authenticated and received
+    #   a session token.  The client is attempting to authenticate
+    #   again using the session token.
+
+    if info.get('auth_method') in ('session', 'autologin'):
+        return authret
+
+    username = authcred['username']
+    ipaddr = authcred['client_ip_addr']
+
+    if crstate.get('challenge'):
+        # response to dynamic challenge
+        duo_pass = crstate.response()
+
+        # received response
+        crstate.expire()
+        try:
+            result, msg = api.auth(username, duo_pass, ipaddr)
+            if result == API_RESULT_ALLOW:
+                authret['status'] = SUCCEED
+                authret['reason'] = msg
+            else:
+                authret['status'] = FAIL
+                authret['reason'] = msg
+            authret['client_reason'] = authret['reason']
+        except Exception as e:
+            log(traceback.format_exc())
+            authret['status'] = FAIL
+            authret['reason'] = "Exception caught in auth: %s" % e
+            authret['client_reason'] = \
+                "Unknown error communicating with Duo service"
+    else:
+        # initial auth request; issue challenge
+        try:
+            result, msg = api.preauth(username)
+            if result == API_RESULT_AUTH:
+                # save state indicating challenge has been issued
+                crstate['challenge'] = True
+                crstate.challenge_post_auth(authret, msg, echo=True)
+            elif result == API_RESULT_ENROLL:
+                authret['status'] = FAIL
+
+                # Attempt to detect whether the login came from a web client
+                # or a native client
+                if attributes.get('log_service_name') == 'WEB_CLIENT':
+                    # It's pretty reasonable to copy/paste the enrollment
+                    # link when it's displayed in a web client
+                    authret['reason'] = msg
+                else:
+                    # Native clients tend not to be in a good position to
+                    # show an enrollment link (e.g. on windows, it shows
+                    # up in a temporary balloon popup from the
+                    # systray), so we'll replace it with a generic message.
+                    authret['reason'] = ('User account has not been '
+                                         'enrolled for Duo authentication')
+                authret['client_reason'] = authret['reason']
+            elif result != API_RESULT_ALLOW:
+                authret['status'] = FAIL
+                authret['reason'] = msg
+                authret['client_reason'] = authret['reason']
+        except Exception as e:
+            log(traceback.format_exc())
+            authret['status'] = FAIL
+            authret['reason'] = "Exception caught in pre-auth: %s" % e
+            authret['client_reason'] = \
+                "Unknown error communicating with Duo service"
+
+    return authret
