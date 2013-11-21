@@ -16,6 +16,9 @@ HOST = '<DUO API HOSTNAME HERE>'
 PROXY_HOST = ''
 PROXY_PORT = 8080
 
+# To skip MFA for VPN connections, set the following to True:
+SKIP_DUO_ON_VPN_AUTH = False
+
 # ------------------------------------------------------------------
 
 import syslog
@@ -489,6 +492,9 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     #   again using the session token.
 
     if info.get('auth_method') in ('session', 'autologin'):
+        return authret
+
+    if SKIP_DUO_ON_VPN_AUTH and attributes.get('vpn_auth'):
         return authret
 
     username = authcred['username']
