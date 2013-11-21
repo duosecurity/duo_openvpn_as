@@ -16,7 +16,9 @@ HOST = '<DUO API HOSTNAME HERE>'
 PROXY_HOST = ''
 PROXY_PORT = 8080
 
-# To skip MFA for VPN connections, set the following to True:
+# Set SKIP_DUO_ON_VPN_AUTH to True to skip Duo authentication for VPN
+# connections. Two-factor will only be required for other
+# authentications (like web server access).
 SKIP_DUO_ON_VPN_AUTH = False
 
 # ------------------------------------------------------------------
