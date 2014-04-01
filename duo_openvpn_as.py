@@ -260,7 +260,8 @@ class Client(object):
     sig_version = 1
 
     def __init__(self, ikey, skey, host,
-                 ca_certs=None):
+                 ca_certs=None,
+                 user_agent=None):
         """
         ca - Path to CA pem file.
         """
@@ -269,6 +270,7 @@ class Client(object):
         self.host = host
         self.ca_certs = ca_certs
         self.set_proxy(host=None, proxy_type=None)
+        self.user_agent = user_agent
 
     def set_proxy(self, host, port=None, headers=None,
                   proxy_type='CONNECT'):
@@ -305,7 +307,11 @@ class Client(object):
         headers = {
             'Authorization': auth,
             'Date': now,
+            'Host': self.host,
         }
+
+        if self.user_agent:
+            headers['User-Agent'] = self.user_agent
 
         if method in ['POST', 'PUT']:
             headers['Content-type'] = 'application/x-www-form-urlencoded'
@@ -519,11 +525,17 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
 
 ### duo_openvpn_as.py integration code:
 
+__version__ = '2.1'
+
 def log(msg):
     msg = 'Duo OpenVPN_AS: %s' % msg
     syslog.syslog(msg)
 
 class OpenVPNIntegration(Client):
+    def __init__(self, *args, **kwargs):
+        kwargs['user_agent'] = 'duo_openvpn_as/' + __version__
+        super(OpenVPNIntegration, self).__init__(*args, **kwargs)
+
     def api_call(self, *args, **kwargs):
         orig_ca_certs = self.ca_certs
         try:
