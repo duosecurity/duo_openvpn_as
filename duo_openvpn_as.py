@@ -515,11 +515,12 @@ class OpenVPNIntegration(Client):
         finally:
             self.ca_certs = orig_ca_certs
 
-    def preauth(self, username):
+    def preauth(self, username, ipaddr):
         log('pre-authentication for %s' % username)
 
         params = {
             'user': username,
+            'ipaddr': ipaddr,
         }
 
         response = self.json_api_call('POST', '/rest/v1/preauth', params)
@@ -629,7 +630,7 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     else:
         # initial auth request; issue challenge
         try:
-            result, msg = api.preauth(username)
+            result, msg = api.preauth(username, ipaddr)
             if result == API_RESULT_AUTH:
                 # save state indicating challenge has been issued
                 crstate['challenge'] = True
