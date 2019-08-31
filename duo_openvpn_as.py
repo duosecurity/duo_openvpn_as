@@ -20,7 +20,7 @@ PROXY_PORT = 8080
 # connections. Two-factor will only be required for other
 # authentications (like web server access).
 SKIP_DUO_ON_VPN_AUTH = False
-# Set to True if GOOGLE_AUTH is globally enabled
+# Set to True if value of "vpn.server.google_auth.enable" is True
 GLOBAL_GOOGLE_AUTH = False
 
 # ------------------------------------------------------------------
