@@ -615,7 +615,9 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
         if ('prop_google_auth' not in authret['proplist']):
             return authret
 
-    username = authcred['username']
+    # Use authret 'user' rather than authcred 'username' to prevent case
+    # sensitivity issues with external auth providers like AD/LDAP
+    username = authret['user']
     ipaddr = authcred['client_ip_addr']
 
     if crstate.get('challenge'):
