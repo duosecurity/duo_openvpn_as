@@ -608,7 +608,7 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     # Don't do challenge/response on users with Google Authenticator
     # enabled globally or per user/group as crstate will be undefined.
     if 'prop_google_auth' in authret['proplist']:
-        if authret['proplist']['prop_google_auth'] == True:
+        if authret['proplist']['prop_google_auth'].lower() == 'true':
             return authret
     
     if GLOBAL_GOOGLE_AUTH:
