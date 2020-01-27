@@ -7,9 +7,9 @@
 
 # ------------------------------------------------------------------
 # Fill in your integration credentials on the following three lines:
-IKEY = '<DUO INTEGRATION KEY HERE>'
-SKEY = '<DUO INTEGRATION SECRET KEY HERE>'
-HOST = '<DUO API HOSTNAME HERE>'
+IKEY = 'DI7OQDAU0QEILC5VZ25A'
+SKEY = 'Q3j5p5b6JZqOslnkIMSdH0mWMhRjseK8bI78iVdJ'
+HOST = 'api-0c135cab.duosecurity.com'
 
 # To use an HTTPS proxy, enter its address below. If PROXY_HOST is
 # left blank no proxy will be used.
