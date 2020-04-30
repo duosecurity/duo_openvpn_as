@@ -20,6 +20,8 @@ PROXY_PORT = 8080
 # connections. Two-factor will only be required for other
 # authentications (like web server access).
 SKIP_DUO_ON_VPN_AUTH = False
+# Set to True if value of "vpn.server.google_auth.enable" is True
+GLOBAL_GOOGLE_AUTH = False
 
 # ------------------------------------------------------------------
 
@@ -603,7 +605,19 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     if SKIP_DUO_ON_VPN_AUTH and attributes.get('vpn_auth'):
         return authret
 
-    username = authcred['username']
+    # Don't do challenge/response on users with Google Authenticator
+    # enabled globally or per user/group as crstate will be undefined.
+    if 'prop_google_auth' in authret['proplist']:
+        if authret['proplist']['prop_google_auth'].lower() == 'true':
+            return authret
+    
+    if GLOBAL_GOOGLE_AUTH:
+        if ('prop_google_auth' not in authret['proplist']):
+            return authret
+
+    # Use authret 'user' rather than authcred 'username' to prevent case
+    # sensitivity issues with external auth providers like AD/LDAP
+    username = authret['user']
     ipaddr = authcred['client_ip_addr']
 
     if crstate.get('challenge'):
