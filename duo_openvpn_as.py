@@ -21,6 +21,10 @@ PROXY_PORT = 8080
 # authentications (like web server access).
 SKIP_DUO_ON_VPN_AUTH = False
 
+# Set AUTOPUSH to True to automatically send "push" as the 2 Factor challenge
+# response which, in turn, triggers Duo to prompt on the account's mobile device
+AUTOPUSH = False
+
 # ------------------------------------------------------------------
 
 import syslog
@@ -558,7 +562,7 @@ class OpenVPNIntegration(Client):
 
         if ipaddr:
             params['ipaddr'] = ipaddr
-      
+
 
         response = self.json_api_call('POST', '/rest/v1/preauth', params)
 
@@ -602,7 +606,7 @@ class OpenVPNIntegration(Client):
 
         if ipaddr:
             params['ipaddr'] = ipaddr
-        
+
 
         response = self.json_api_call('POST', '/rest/v1/auth', params)
 
@@ -621,6 +625,7 @@ class OpenVPNIntegration(Client):
             log('unknown auth result: %s' % result)
 
         return result, status
+
 
 api = OpenVPNIntegration(IKEY, SKEY, HOST)
 if PROXY_HOST:
@@ -644,9 +649,17 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     username = authcred['username']
     ipaddr = authcred.get('client_ip_addr')
 
-    if crstate.get('challenge'):
-        # response to dynamic challenge
-        duo_pass = crstate.response()
+    # check to see if the `try_push` flag was set
+    try_push = crstate.pop("try_push", None)
+
+    if try_push or crstate.get("challenge"):
+        # when the `try_push` flag is set, automatically set the Duo passcode to "push"
+        if try_push:
+            log("automatically setting to push")
+            duo_pass = "push"
+        else:
+            # response to dynamic challenge
+            duo_pass = crstate.response()
 
         # received response
         crstate.expire()
@@ -666,13 +679,23 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
             authret['client_reason'] = \
                 "Unknown error communicating with Duo service"
     else:
+        log("initial auth request")
+
         # initial auth request; issue challenge
         try:
             result, msg = api.preauth(username, ipaddr)
             if result == API_RESULT_AUTH:
-                # save state indicating challenge has been issued
-                crstate['challenge'] = True
-                crstate.challenge_post_auth(authret, msg, echo=True)
+                # when the preauth result comes back as requiring authentication
+                # try to automatically respond to this with the "push" key
+                if AUTOPUSH:
+                    log("try autopush")
+                    crstate["try_push"] = True
+                    post_auth_cr(authcred, attributes, authret, info, crstate)
+                else:
+                    log("prompt for challenge")
+                    # save state indicating challenge has been issued
+                    crstate["challenge"] = True
+                    crstate.challenge_post_auth(authret, msg, echo=True)
             elif result == API_RESULT_ENROLL:
                 authret['status'] = FAIL
 
