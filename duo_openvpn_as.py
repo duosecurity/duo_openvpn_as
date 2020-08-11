@@ -520,8 +520,11 @@ class OpenVPNIntegration(Client):
 
         params = {
             'user': username,
-            'ipaddr': ipaddr,
         }
+
+        if ipaddr:
+            params['ipaddr'] = ipaddr
+      
 
         response = self.json_api_call('POST', '/rest/v1/preauth', params)
 
@@ -562,8 +565,11 @@ class OpenVPNIntegration(Client):
             'user': username,
             'factor': 'auto',
             'auto': password,
-            'ipaddr': ipaddr
         }
+
+        if ipaddr:
+            params['ipaddr'] = ipaddr
+        
 
         response = self.json_api_call('POST', '/rest/v1/auth', params)
 
@@ -604,7 +610,7 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
         return authret
 
     username = authcred['username']
-    ipaddr = authcred['client_ip_addr']
+    ipaddr = authcred.get('client_ip_addr')
 
     if crstate.get('challenge'):
         # response to dynamic challenge
