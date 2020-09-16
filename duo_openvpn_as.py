@@ -171,13 +171,19 @@ import hmac
 import json
 import os
 import sys
-import urllib
+
+try:
+    # Unicode only exists in python 2
+    text_type = unicode
+except NameError:
+    # Python 3 text_type is the string object
+    text_type = str
 
 def canon_params(params):
     args = []
     for key in sorted(params.keys()):
         val = params[key]
-        arg = '%s=%s' % (urllib.quote(key, '~'), urllib.quote(val, '~'))
+        arg = '%s=%s' % (quote(key, '~'), quote(val, '~'))
         args.append(arg)
     return '&'.join(args)
 
@@ -204,20 +210,33 @@ def sign(ikey, skey, method, host, uri, date, sig_version, params):
     Return basic authorization header line with a Duo Web API signature.
     """
     canonical = canonicalize(method, host, uri, params, date, sig_version)
-    if isinstance(skey, unicode):
+    if isinstance(skey, text_type):
         skey = skey.encode('utf-8')
+
+    if isinstance(canonical, text_type):
+        canonical = canonical.encode('utf-8')
+
     sig = hmac.new(skey, canonical, hashlib.sha1)
     auth = '%s:%s' % (ikey, sig.hexdigest())
-    return 'Basic %s' % base64.b64encode(auth)
+
+    if isinstance(auth, text_type):
+        auth = auth.encode('utf-8')
+
+    auth = base64.b64encode(auth)
+
+    if not isinstance(auth, text_type):
+        auth = auth.decode('utf-8')
+
+    return 'Basic %s' % auth
 
 
 def encode_params(params):
     """Returns copy of params with unicode strings utf-8 encoded"""
     new_params = {}
     for key, value in params.items():
-        if isinstance(key, unicode):
+        if isinstance(key, text_type):
             key = key.encode("utf-8")
-        if isinstance(value, unicode):
+        if isinstance(value, text_type):
             value = value.encode("utf-8")
         new_params[key] = value
     return new_params
@@ -282,11 +301,11 @@ class Client(object):
 
         if method in ['POST', 'PUT']:
             headers['Content-type'] = 'application/x-www-form-urlencoded'
-            body = urllib.urlencode(params, doseq=True)
+            body = urlencode(params, doseq=True)
             uri = path
         else:
             body = None
-            uri = path + '?' + urllib.urlencode(params, doseq=True)
+            uri = path + '?' + urlencode(params, doseq=True)
 
         # Host and port for the HTTP(S) connection to the API server.
         if self.ca_certs == 'HTTP':
@@ -389,7 +408,16 @@ class Client(object):
 # limitations under the License.
 #
 
-import httplib
+try:
+    import httplib
+except ImportError:
+    import http.client as httplib
+
+try:
+    from urllib import quote, urlencode
+except ImportError:
+    from urllib.parse import quote, urlencode
+
 import re
 import socket
 import ssl
@@ -508,7 +536,7 @@ class OpenVPNIntegration(Client):
         orig_ca_certs = self.ca_certs
         try:
             with tempfile.NamedTemporaryFile() as fp:
-                fp.write(CA_CERT)
+                fp.write(CA_CERT.encode('utf-8'))
                 fp.flush()
                 self.ca_certs = fp.name
                 return Client.api_call(self, *args, **kwargs)
