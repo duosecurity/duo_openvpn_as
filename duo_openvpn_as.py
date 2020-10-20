@@ -169,8 +169,6 @@ import email.utils
 import hashlib
 import hmac
 import json
-import os
-import sys
 
 try:
     # Unicode only exists in python 2
@@ -508,10 +506,18 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
     self.sock = sock
     if self._tunnel_host:
       self._tunnel()
-    self.sock = ssl.wrap_socket(self.sock, keyfile=self.key_file,
-                                certfile=self.cert_file,
-                                cert_reqs=self.cert_reqs,
-                                ca_certs=self.ca_certs)
+
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=self.ca_certs)
+
+    if self.cert_file:
+        context.load_cert_chain(self.cert_file, keyfile=self.key_file)
+
+    ssl_version_blacklist = ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
+    context.options = self.cert_reqs | ssl_version_blacklist
+
+    self.sock - context.wrap_socket(self.sock, server_hostname=self.host)
+
     if self.cert_reqs & ssl.CERT_REQUIRED:
       cert = self.sock.getpeercert()
       cert_validation_host = self._tunnel_host or self.host
@@ -561,7 +567,6 @@ class OpenVPNIntegration(Client):
         if not result:
             log('invalid API response: %s' % response)
             raise RuntimeError('invalid API response: %s' % response)
-            return
 
         if result == API_RESULT_AUTH:
             log('secondary authentication required for user %s' % username)
@@ -607,7 +612,6 @@ class OpenVPNIntegration(Client):
         if not result or not status:
             log('invalid API response: %s' % response)
             raise RuntimeError('invalid API response: %s' % response)
-            return
 
         if result == API_RESULT_ALLOW:
             log('auth success for %s: %s' % (username, status))
