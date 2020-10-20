@@ -516,7 +516,7 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
     ssl_version_blacklist = ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
     context.options = self.cert_reqs | ssl_version_blacklist
 
-    self.sock - context.wrap_socket(self.sock, server_hostname=self.host)
+    self.sock = context.wrap_socket(self.sock, server_hostname=self.host)
 
     if self.cert_reqs & ssl.CERT_REQUIRED:
       cert = self.sock.getpeercert()
