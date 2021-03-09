@@ -640,7 +640,10 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     #   a session token.  The client is attempting to authenticate
     #   again using the session token.
 
-    if info.get('auth_method') in ('session', 'autologin'):
+    auth_method = info.get('auth_method')
+    if auth_method in ('session', 'autologin'):
+        log("skipping auth method=%s" % auth_method)
+
         return authret
 
     if SKIP_DUO_ON_VPN_AUTH and attributes.get('vpn_auth'):
