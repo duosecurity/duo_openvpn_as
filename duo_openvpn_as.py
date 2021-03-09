@@ -537,6 +537,27 @@ def log(msg):
     msg = 'Duo OpenVPN_AS: %s' % msg
     syslog.syslog(msg)
 
+
+class PreauthResponse(dict):
+    @property
+    def factors(self):
+        return self.get('factors', {})
+
+    @property
+    def msg(self):
+        """Alias for status"""
+
+        return self.status
+
+    @property
+    def result(self):
+        return self.get('result')
+
+    @property
+    def status(self):
+        return self.get('status')
+
+
 class OpenVPNIntegration(Client):
     def __init__(self, *args, **kwargs):
         kwargs['user_agent'] = 'duo_openvpn_as/' + __version__
@@ -564,9 +585,9 @@ class OpenVPNIntegration(Client):
             params['ipaddr'] = ipaddr
 
 
-        response = self.json_api_call('POST', '/rest/v1/preauth', params)
+        response = PreauthResponse(self.json_api_call('POST', '/rest/v1/preauth', params))
 
-        result = response.get('result')
+        result = response.result
 
         if not result:
             log('invalid API response: %s' % response)
@@ -577,7 +598,7 @@ class OpenVPNIntegration(Client):
             msg = 'Duo passcode or second factor:'
             return (result, msg)
 
-        status = response.get('status')
+        status = response.status
 
         if not status:
             log('invalid API response: %s' % response)
@@ -593,7 +614,7 @@ class OpenVPNIntegration(Client):
         else:
             log('unknown preauth result: %s' % result)
 
-        return (result, msg)
+        return response
 
     def auth(self, username, password, ipaddr):
         log('authentication for %s' % username)
@@ -653,13 +674,13 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     ipaddr = authcred.get('client_ip_addr')
 
     # check to see if the `try_push` flag was set
-    try_push = crstate.pop("try_push", None)
+    autopush_factor = crstate.pop("autopush_factor", None)
 
-    if try_push or crstate.get("challenge"):
+    if autopush_factor or crstate.get("challenge"):
         # when the `try_push` flag is set, automatically set the Duo passcode to "push"
-        if try_push:
-            log("automatically setting to push")
-            duo_pass = "push"
+        if autopush_factor:
+            log("automatically setting factor to %s" % (autopush_factor,))
+            duo_pass = autopush_factor
         else:
             # response to dynamic challenge
             duo_pass = crstate.response()
@@ -686,13 +707,16 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
 
         # initial auth request; issue challenge
         try:
-            result, msg = api.preauth(username, ipaddr)
+            response = api.preauth(username, ipaddr)
+            result, msg = response.result, response.msg
             if result == API_RESULT_AUTH:
                 # when the preauth result comes back as requiring authentication
                 # try to automatically respond to this with the "push" key
                 if AUTOPUSH:
                     log("try autopush")
-                    crstate["try_push"] = True
+
+                    autopush_factor = response.factors.get('default')
+                    crstate["autopush_factor"] = autopush_factor
                     post_auth_cr(authcred, attributes, authret, info, crstate)
                 else:
                     log("prompt for challenge")
