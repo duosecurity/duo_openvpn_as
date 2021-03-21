@@ -722,8 +722,10 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
                 # when the preauth result comes back as requiring authentication
                 # try to automatically respond to this with the "push" key
                 if AUTOPUSH:
-                    log("Autopushing user: {0}".format(username))
                     autopush_factor = response.factors.get('default')
+
+                    log("Autopushing user: %s, autopush_factor=%s" % (username, autopush_factor))
+
                     authret = auth_and_update_result_structure(username, autopush_factor, ipaddr, authret)
                 else:
                     log("prompt for challenge")
