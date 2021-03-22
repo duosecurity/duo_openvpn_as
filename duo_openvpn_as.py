@@ -21,6 +21,10 @@ PROXY_PORT = 8080
 # authentications (like web server access).
 SKIP_DUO_ON_VPN_AUTH = False
 
+# Set AUTOPUSH to True to automatically prompt the user's default 2FA device.
+# This will remove any user prompts for factor selection.
+AUTOPUSH = False
+
 # ------------------------------------------------------------------
 
 import syslog
@@ -533,6 +537,36 @@ def log(msg):
     msg = 'Duo OpenVPN_AS: %s' % msg
     syslog.syslog(msg)
 
+
+class PreauthResponse(dict):
+    @property
+    def factors(self):
+        return self.get('factors', {})
+
+    @property
+    def msg(self):
+        """Alias for status"""
+
+        return self.status
+
+    @msg.setter
+    def msg(self, value):
+        """Alias for status"""
+        self['status'] = value
+
+    @property
+    def result(self):
+        return self.get('result')
+
+    @property
+    def status(self):
+        return self.get('status')
+
+    @status.setter
+    def status(self, value):
+        self['status'] = value
+
+
 class OpenVPNIntegration(Client):
     def __init__(self, *args, **kwargs):
         kwargs['user_agent'] = 'duo_openvpn_as/' + __version__
@@ -558,11 +592,10 @@ class OpenVPNIntegration(Client):
 
         if ipaddr:
             params['ipaddr'] = ipaddr
-      
 
-        response = self.json_api_call('POST', '/rest/v1/preauth', params)
+        response = PreauthResponse(self.json_api_call('POST', '/rest/v1/preauth', params))
 
-        result = response.get('result')
+        result = response.result
 
         if not result:
             log('invalid API response: %s' % response)
@@ -570,15 +603,14 @@ class OpenVPNIntegration(Client):
 
         if result == API_RESULT_AUTH:
             log('secondary authentication required for user %s' % username)
-            msg = 'Duo passcode or second factor:'
-            return (result, msg)
+            response.msg = 'Duo passcode or second factor:'
+            return response
 
-        status = response.get('status')
+        status = response.status
 
         if not status:
             log('invalid API response: %s' % response)
             raise RuntimeError('invalid API response: %s' % response)
-        msg = status
 
         if result == API_RESULT_ENROLL:
             log('user %s is not enrolled: %s' % (username, status))
@@ -589,7 +621,7 @@ class OpenVPNIntegration(Client):
         else:
             log('unknown preauth result: %s' % result)
 
-        return (result, msg)
+        return response
 
     def auth(self, username, password, ipaddr):
         log('authentication for %s' % username)
@@ -602,7 +634,7 @@ class OpenVPNIntegration(Client):
 
         if ipaddr:
             params['ipaddr'] = ipaddr
-        
+
 
         response = self.json_api_call('POST', '/rest/v1/auth', params)
 
@@ -622,9 +654,34 @@ class OpenVPNIntegration(Client):
 
         return result, status
 
+
 api = OpenVPNIntegration(IKEY, SKEY, HOST)
 if PROXY_HOST:
     api.set_proxy(host=PROXY_HOST, port=PROXY_PORT)
+
+
+def auth_and_update_result_structure(username, factor, ipaddr, authret):
+    """ Send the Duo 2FA and then populate the OpenVPN
+    return structure with the result.
+    """
+    try:
+        result, msg = api.auth(username, factor, ipaddr)
+        if result == API_RESULT_ALLOW:
+            authret['status'] = SUCCEED
+            authret['reason'] = msg
+        else:
+            authret['status'] = FAIL
+            authret['reason'] = msg
+        authret['client_reason'] = authret['reason']
+    except Exception as e:
+        log(traceback.format_exc())
+        authret['status'] = FAIL
+        authret['reason'] = "Exception caught in auth: %s" % e
+        authret['client_reason'] = \
+            "Unknown error communicating with Duo service"
+
+    return authret
+
 
 def post_auth_cr(authcred, attributes, authret, info, crstate):
     # Don't do challenge/response on sessions or autologin clients.
@@ -635,7 +692,10 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     #   a session token.  The client is attempting to authenticate
     #   again using the session token.
 
-    if info.get('auth_method') in ('session', 'autologin'):
+    auth_method = info.get('auth_method')
+    if auth_method in ('session', 'autologin'):
+        log("skipping auth method=%s" % auth_method)
+
         return authret
 
     if SKIP_DUO_ON_VPN_AUTH and attributes.get('vpn_auth'):
@@ -644,35 +704,34 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
     username = authcred['username']
     ipaddr = authcred.get('client_ip_addr')
 
-    if crstate.get('challenge'):
+    if crstate.get("challenge"):
         # response to dynamic challenge
         duo_pass = crstate.response()
 
         # received response
         crstate.expire()
-        try:
-            result, msg = api.auth(username, duo_pass, ipaddr)
-            if result == API_RESULT_ALLOW:
-                authret['status'] = SUCCEED
-                authret['reason'] = msg
-            else:
-                authret['status'] = FAIL
-                authret['reason'] = msg
-            authret['client_reason'] = authret['reason']
-        except Exception as e:
-            log(traceback.format_exc())
-            authret['status'] = FAIL
-            authret['reason'] = "Exception caught in auth: %s" % e
-            authret['client_reason'] = \
-                "Unknown error communicating with Duo service"
+        authret = auth_and_update_result_structure(username, duo_pass, ipaddr, authret)
     else:
+        log("initial auth request")
+
         # initial auth request; issue challenge
         try:
-            result, msg = api.preauth(username, ipaddr)
+            response = api.preauth(username, ipaddr)
+            result, msg = response.result, response.msg
             if result == API_RESULT_AUTH:
-                # save state indicating challenge has been issued
-                crstate['challenge'] = True
-                crstate.challenge_post_auth(authret, msg, echo=True)
+                # when the preauth result comes back as requiring authentication
+                # try to automatically respond to this with the "push" key
+                if AUTOPUSH:
+                    autopush_factor = response.factors.get('default')
+
+                    log("Autopushing user: %s, autopush_factor=%s" % (username, autopush_factor))
+
+                    authret = auth_and_update_result_structure(username, autopush_factor, ipaddr, authret)
+                else:
+                    log("prompt for challenge")
+                    # save state indicating challenge has been issued
+                    crstate["challenge"] = True
+                    crstate.challenge_post_auth(authret, msg, echo=True)
             elif result == API_RESULT_ENROLL:
                 authret['status'] = FAIL
 
