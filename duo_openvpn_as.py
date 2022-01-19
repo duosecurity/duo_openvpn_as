@@ -760,4 +760,6 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
             authret['client_reason'] = \
                 "Unknown error communicating with Duo service"
 
-    return authret
+    # if user needs to be created after the login, its props should be returned 
+    # as a second parameter from the function
+    return authret, authret.get('proplist')
