@@ -11,6 +11,10 @@
 
 Download the [latest Duo OpenVPN Access Server release](https://github.com/duosecurity/duo_openvpn_as/archive/refs/heads/master.zip) as a zip file from GitHub and unzip the package on your own OpenVPN Access Server.
 
+## TLS 1.2 and 1.3 Support
+
+Duo's OpenVPN Access Server plugin uses Python's ssl module and OpenSSL for TLS operations. Python versions 2.7 (and higher) and 3.5 (and higher) have both TLS 1.2 and TLS 1.3 support.
+
 # Usage
 
 ## Configuring & Enabling the Post-Auth Script
