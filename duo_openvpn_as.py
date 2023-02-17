@@ -531,7 +531,7 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
 
 ### duo_openvpn_as.py integration code:
 
-__version__ = '2.5'
+__version__ = '2.6'
 
 def log(msg):
     msg = 'Duo OpenVPN_AS: %s' % msg
