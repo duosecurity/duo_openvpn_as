@@ -25,6 +25,10 @@ SKIP_DUO_ON_VPN_AUTH = False
 # This will remove any user prompts for factor selection.
 AUTOPUSH = False
 
+# The text of the prompt that will ask the user for their choice of factor or 
+# their passcode.
+PASSCODE_OR_FACTOR_PROMPT = 'Duo passcode or second factor:'
+
 # ------------------------------------------------------------------
 
 import syslog
@@ -603,7 +607,7 @@ class OpenVPNIntegration(Client):
 
         if result == API_RESULT_AUTH:
             log('secondary authentication required for user %s' % username)
-            response.msg = 'Duo passcode or second factor:'
+            response.msg = PASSCODE_OR_FACTOR_PROMPT
             return response
 
         status = response.status
