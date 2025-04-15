@@ -728,9 +728,14 @@ def post_auth_cr(authcred, attributes, authret, info, crstate):
                 if AUTOPUSH:
                     autopush_factor = response.factors.get('default')
 
-                    log("Autopushing user: %s, autopush_factor=%s" % (username, autopush_factor))
-
-                    authret = auth_and_update_result_structure(username, autopush_factor, ipaddr, authret)
+                    if autopush_factor is None:
+                        log("No autopush factors are available in Duo policy for user %s" % username)
+                        authret['status'] = FAIL
+                        authret['reason'] = "No autopush factor available"
+                        authret['client_reason'] = authret['reason']
+                    else:
+                        log("Autopushing user: %s, autopush_factor=%s" % (username, autopush_factor))
+                        authret = auth_and_update_result_structure(username, autopush_factor, ipaddr, authret)
                 else:
                     log("prompt for challenge")
                     # save state indicating challenge has been issued
