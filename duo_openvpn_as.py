@@ -512,7 +512,7 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((self.host, self.port))
     self.sock = sock
-    if self._tunnel_host:
+    if getattr(self, '_tunnel_host', None):
       self._tunnel()
 
     context = ssl.create_default_context()
@@ -524,12 +524,13 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
     ssl_version_blacklist = ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
     context.options = self.cert_reqs | ssl_version_blacklist
 
-    self.sock = context.wrap_socket(self.sock, server_hostname=self.host)
+    api_host = self._tunnel_host or self.host
+    hostname = api_host.split(':', 0)[0]
+
+    self.sock = context.wrap_socket(self.sock, server_hostname=hostname)
 
     if self.cert_reqs & ssl.CERT_REQUIRED:
       cert = self.sock.getpeercert()
-      cert_validation_host = self._tunnel_host or self.host
-      hostname = cert_validation_host.split(':', 0)[0]
       if not self._ValidateCertificateHostname(cert, hostname):
         raise InvalidCertificateException(hostname, cert, 'hostname mismatch')
 
