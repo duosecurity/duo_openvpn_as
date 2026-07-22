@@ -25,9 +25,15 @@ SKIP_DUO_ON_VPN_AUTH = False
 # This will remove any user prompts for factor selection.
 AUTOPUSH = False
 
-# The text of the prompt that will ask the user for their choice of factor or 
+# The text of the prompt that will ask the user for their choice of factor or
 # their passcode.
 PASSCODE_OR_FACTOR_PROMPT = 'Duo passcode or second factor:'
+
+# Set ENABLE_CA_PINNING to False to disable CA pinning.
+# When disabled, TLS connections validate against the OS trust store instead
+# of the bundled Duo CA certificates. TLS verification is always enforced
+# regardless of this setting. Default: True (pinning enabled).
+ENABLE_CA_PINNING = True
 
 # ------------------------------------------------------------------
 
@@ -883,7 +889,8 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
       self._tunnel()
 
     context = ssl.create_default_context()
-    context.load_verify_locations(cafile=self.ca_certs)
+    if self.ca_certs:
+        context.load_verify_locations(cafile=self.ca_certs)
 
     if self.cert_file:
         context.load_cert_chain(self.cert_file, keyfile=self.key_file)
@@ -944,6 +951,8 @@ class OpenVPNIntegration(Client):
         super(OpenVPNIntegration, self).__init__(*args, **kwargs)
 
     def api_call(self, *args, **kwargs):
+        if not ENABLE_CA_PINNING:
+            return Client.api_call(self, *args, **kwargs)
         orig_ca_certs = self.ca_certs
         try:
             with tempfile.NamedTemporaryFile() as fp:
@@ -1029,6 +1038,9 @@ class OpenVPNIntegration(Client):
 api = OpenVPNIntegration(IKEY, SKEY, HOST)
 if PROXY_HOST:
     api.set_proxy(host=PROXY_HOST, port=PROXY_PORT)
+
+if not ENABLE_CA_PINNING:
+    log('WARNING: CA pinning is disabled. TLS connections will validate against OS trust store.')
 
 
 def auth_and_update_result_structure(username, factor, ipaddr, authret):
