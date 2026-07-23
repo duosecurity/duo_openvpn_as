@@ -910,6 +910,7 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
 ### duo_openvpn_as.py integration code:
 
 __version__ = '2.8'
+__ca_bundle_version__ = '1.0'
 
 def log(msg):
     msg = 'Duo OpenVPN_AS: %s' % msg
@@ -947,7 +948,8 @@ class PreauthResponse(dict):
 
 class OpenVPNIntegration(Client):
     def __init__(self, *args, **kwargs):
-        kwargs['user_agent'] = 'duo_openvpn_as/' + __version__
+        ca_pinning_status = 'enabled' if ENABLE_CA_PINNING else 'disabled'
+        kwargs['user_agent'] = f'duo_openvpn_as/{__version__} ca_bundle/{__ca_bundle_version__} (ca_pinning={ca_pinning_status})'
         super(OpenVPNIntegration, self).__init__(*args, **kwargs)
 
     def api_call(self, *args, **kwargs):
@@ -1039,6 +1041,7 @@ api = OpenVPNIntegration(IKEY, SKEY, HOST)
 if PROXY_HOST:
     api.set_proxy(host=PROXY_HOST, port=PROXY_PORT)
 
+log(f'CA bundle version: {__ca_bundle_version__}, CA pinning: {"enabled" if ENABLE_CA_PINNING else "disabled"}')
 if not ENABLE_CA_PINNING:
     log('WARNING: CA pinning is disabled. TLS connections will validate against OS trust store.')
 
