@@ -888,15 +888,18 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
     if self._tunnel_host:
       self._tunnel()
 
-    context = ssl.create_default_context()
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
+
     if self.ca_certs:
         context.load_verify_locations(cafile=self.ca_certs)
+    else:
+        context.load_default_certs()
 
     if self.cert_file:
         context.load_cert_chain(self.cert_file, keyfile=self.key_file)
-
-    ssl_version_blacklist = ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
-    context.options = self.cert_reqs | ssl_version_blacklist
 
     self.sock = context.wrap_socket(self.sock, server_hostname=self.host)
 
