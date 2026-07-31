@@ -895,6 +895,7 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
 
     if self.ca_certs:
         context.load_verify_locations(cafile=self.ca_certs)
+        context.verify_flags |= ssl.VERIFY_X509_STRICT
     else:
         context.load_default_certs()
 
