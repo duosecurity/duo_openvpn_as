@@ -913,7 +913,7 @@ class CertValidatingHTTPSConnection(httplib.HTTPConnection):
 
 ### duo_openvpn_as.py integration code:
 
-__version__ = '2.8'
+__version__ = '2.9'
 __ca_bundle_version__ = '1.0'
 
 def log(msg):
